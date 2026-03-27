@@ -29,6 +29,8 @@ function initializeContentScript() {
     startY: number
     startWidth: number
     startHeight: number
+    startLeft: number
+    edge: 'left' | 'right'
   } | null = null
 
   function buildOverlayUrl() {
@@ -136,14 +138,25 @@ function initializeContentScript() {
 
     .resize {
       position: absolute;
-      right: 0;
       bottom: 0;
       width: 18px;
       height: 18px;
+    }
+
+    .resize-right {
+      right: 0;
       cursor: nwse-resize;
       background:
         linear-gradient(135deg, transparent 0 50%, rgba(15, 23, 42, 0.22) 50% 60%, transparent 60% 100%),
         linear-gradient(135deg, transparent 0 68%, rgba(15, 23, 42, 0.22) 68% 78%, transparent 78% 100%);
+    }
+
+    .resize-left {
+      left: 0;
+      cursor: nesw-resize;
+      background:
+        linear-gradient(225deg, transparent 0 50%, rgba(15, 23, 42, 0.22) 50% 60%, transparent 60% 100%),
+        linear-gradient(225deg, transparent 0 68%, rgba(15, 23, 42, 0.22) 68% 78%, transparent 78% 100%);
     }
     `
 
@@ -172,8 +185,11 @@ function initializeContentScript() {
     iframe.title = 'TLDraw overlay'
     iframe.allow = 'clipboard-read; clipboard-write'
 
+    const leftResizeHandle = document.createElement('div')
+    leftResizeHandle.className = 'resize resize-left'
+
     const resizeHandle = document.createElement('div')
-    resizeHandle.className = 'resize'
+    resizeHandle.className = 'resize resize-right'
 
     toolbar.addEventListener('pointerdown', (event) => {
       if (event.target === closeButton) {
@@ -212,49 +228,72 @@ function initializeContentScript() {
       toolbar.releasePointerCapture(event.pointerId)
     })
 
-    resizeHandle.addEventListener('pointerdown', (event) => {
-      resizeState = {
-        pointerId: event.pointerId,
-        startX: event.clientX,
-        startY: event.clientY,
-        startWidth: wrapper.offsetWidth,
-        startHeight: wrapper.offsetHeight
-      }
-      resizeHandle.setPointerCapture(event.pointerId)
-      event.stopPropagation()
-    })
+    function attachResizeHandle(handle: HTMLDivElement, edge: 'left' | 'right') {
+      handle.addEventListener('pointerdown', (event) => {
+        const bounds = wrapper.getBoundingClientRect()
 
-    resizeHandle.addEventListener('pointermove', (event) => {
-      if (!resizeState || resizeState.pointerId !== event.pointerId) {
-        return
-      }
+        resizeState = {
+          pointerId: event.pointerId,
+          startX: event.clientX,
+          startY: event.clientY,
+          startWidth: wrapper.offsetWidth,
+          startHeight: wrapper.offsetHeight,
+          startLeft: bounds.left,
+          edge
+        }
+        handle.setPointerCapture(event.pointerId)
+        event.stopPropagation()
+      })
 
-      const nextWidth = clampPosition(
-        resizeState.startWidth + (event.clientX - resizeState.startX),
-        320,
-        Math.floor(window.innerWidth * 0.9)
-      )
-      const nextHeight = clampPosition(
-        resizeState.startHeight + (event.clientY - resizeState.startY),
-        220,
-        Math.floor(window.innerHeight * 0.9)
-      )
+      handle.addEventListener('pointermove', (event) => {
+        if (!resizeState || resizeState.pointerId !== event.pointerId || resizeState.edge !== edge) {
+          return
+        }
 
-      wrapper.style.width = `${nextWidth}px`
-      wrapper.style.height = `${nextHeight}px`
-    })
+        const maxWidth = Math.floor(window.innerWidth * 0.9)
+        const maxHeight = Math.floor(window.innerHeight * 0.9)
+        const widthDelta = event.clientX - resizeState.startX
+        const unclampedWidth =
+          edge === 'left'
+            ? resizeState.startWidth - widthDelta
+            : resizeState.startWidth + widthDelta
+        const nextWidth = clampPosition(unclampedWidth, 320, maxWidth)
+        const nextHeight = clampPosition(
+          resizeState.startHeight + (event.clientY - resizeState.startY),
+          220,
+          maxHeight
+        )
 
-    resizeHandle.addEventListener('pointerup', (event) => {
-      if (!resizeState || resizeState.pointerId !== event.pointerId) {
-        return
-      }
+        wrapper.style.width = `${nextWidth}px`
+        wrapper.style.height = `${nextHeight}px`
 
-      resizeState = null
-      resizeHandle.releasePointerCapture(event.pointerId)
-    })
+        if (edge === 'left') {
+          const nextLeft = clampPosition(
+            resizeState.startLeft + (resizeState.startWidth - nextWidth),
+            0,
+            window.innerWidth - nextWidth
+          )
+
+          wrapper.style.left = `${nextLeft}px`
+          wrapper.style.right = 'auto'
+        }
+      })
+
+      handle.addEventListener('pointerup', (event) => {
+        if (!resizeState || resizeState.pointerId !== event.pointerId || resizeState.edge !== edge) {
+          return
+        }
+
+        resizeState = null
+        handle.releasePointerCapture(event.pointerId)
+      })
+    }
+
+    attachResizeHandle(leftResizeHandle, 'left')
+    attachResizeHandle(resizeHandle, 'right')
 
     shadow.append(style, wrapper)
-    wrapper.append(toolbar, iframe, resizeHandle)
+    wrapper.append(toolbar, iframe, leftResizeHandle, resizeHandle)
     document.documentElement.append(root)
 
     return root
